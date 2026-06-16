@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'Target URL (blank = auto-rotate matching Nova rotation)'
+        description: 'Target URL (blank = auto-rotate)'
         required: false
         default: ''
       program:
@@ -12,11 +12,11 @@ on:
         required: false
         default: 'shopify'
       model:
-        description: 'LLM model (Ollama)'
+        description: 'LLM model'
         required: false
         default: 'qwen3:8b'
       mode:
-        description: 'Scan depth (fast / normal / deep)'
+        description: 'Scan depth (fast/normal/deep)'
         required: false
         default: 'normal'
   schedule:
@@ -47,20 +47,20 @@ jobs:
           else
             DOW=$(date +%u)
             case "$DOW" in
-              1) TARGET="https://shopify.plus"           ; PROGRAM="shopify"   ; LABEL="Shopify Primary"        ;;
-              2) TARGET="https://accounts.shopify.com"   ; PROGRAM="shopify"   ; LABEL="Shopify Accounts"       ;;
-              3) TARGET="https://gitlab.com"             ; PROGRAM="gitlab"    ; LABEL="GitLab Core"            ;;
-              4) TARGET="https://accounts.google.com"    ; PROGRAM="google"    ; LABEL="Google Accounts"        ;;
-              5) TARGET="https://portal.azure.com"       ; PROGRAM="microsoft" ; LABEL="Azure Portal"           ;;
-              6) TARGET="https://partners.shopify.com"   ; PROGRAM="shopify"   ; LABEL="Shopify Partners"       ;;
-              7) TARGET="https://customers.gitlab.com"   ; PROGRAM="gitlab"    ; LABEL="GitLab Customers"       ;;
+              1) TARGET="https://shopify.plus"           ; PROGRAM="shopify"   ; LABEL="Shopify Primary"  ;;
+              2) TARGET="https://accounts.shopify.com"   ; PROGRAM="shopify"   ; LABEL="Shopify Accounts" ;;
+              3) TARGET="https://gitlab.com"             ; PROGRAM="gitlab"    ; LABEL="GitLab Core"      ;;
+              4) TARGET="https://accounts.google.com"    ; PROGRAM="google"    ; LABEL="Google Accounts"  ;;
+              5) TARGET="https://portal.azure.com"       ; PROGRAM="microsoft" ; LABEL="Azure Portal"     ;;
+              6) TARGET="https://partners.shopify.com"   ; PROGRAM="shopify"   ; LABEL="Shopify Partners" ;;
+              7) TARGET="https://customers.gitlab.com"   ; PROGRAM="gitlab"    ; LABEL="GitLab Customers" ;;
             esac
           fi
-          [ "$(echo "$TARGET" | grep -ciE 'localhost|127\.')" -gt 0 ] && exit 1
+          if echo "$TARGET" | grep -qiE 'localhost|127\.'; then exit 1; fi
           echo "target=$TARGET"   >> $GITHUB_OUTPUT
           echo "program=$PROGRAM" >> $GITHUB_OUTPUT
           echo "label=$LABEL"     >> $GITHUB_OUTPUT
-          echo "Target: $TARGET | Program: $PROGRAM"
+          echo "Target: $TARGET  Program: $PROGRAM"
 
   drakben-hunt:
     name: "Drakben - ${{ needs.select-target.outputs.label }}"
@@ -96,26 +96,16 @@ jobs:
       GOPATH:              /root/go
 
     steps:
-      - name: "Bootstrap system and workspace"
+      - name: "Bootstrap"
         run: |
-          echo "Drakben - Autonomous Pentest Agent (Nova Comparison Challenge)"
-          echo "Target  : $TARGET"
-          echo "Program : $PROGRAM"
-          echo "Model   : $LLM_MODEL"
-          echo "Time    : $(date -u)"
+          echo "Drakben - Autonomous Pentest Agent | Target=$TARGET | Program=$PROGRAM | Time=$(date -u)"
           export DEBIAN_FRONTEND=noninteractive
           apt-get update -qq 2>/dev/null | tail -1
-          apt-get install -y -qq \
-            python3 python3-pip python3-venv git curl wget jq bc \
-            nmap masscan nikto gobuster sqlmap hydra wafw00f sslscan \
-            ffuf subfinder httpx-toolkit nuclei dnsrecon whatweb \
-            net-tools iputils-ping dnsutils whois netcat-openbsd \
-            libssl-dev libffi-dev build-essential golang-go chromium-driver \
-            rustc cargo 2>/dev/null | tail -3
+          apt-get install -y -qq python3 python3-pip python3-venv git curl wget jq bc nmap masscan nikto gobuster sqlmap hydra wafw00f sslscan ffuf subfinder httpx-toolkit nuclei dnsrecon whatweb net-tools iputils-ping dnsutils whois netcat-openbsd libssl-dev libffi-dev build-essential golang-go chromium-driver rustc cargo 2>/dev/null | tail -2
           mkdir -p $WORKSPACE/{reports,exploits,chains,evidence,recon,sessions,weapons}
           mkdir -p /root/go/bin
-          echo "/root/go/bin"  >> $GITHUB_PATH
-          echo "/usr/local/bin" >> $GITHUB_PATH
+          echo "/root/go/bin"    >> $GITHUB_PATH
+          echo "/usr/local/bin"  >> $GITHUB_PATH
 
       - name: "Checkout Drakben"
         uses: actions/checkout@v4
@@ -124,229 +114,196 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: drakben-pip-${{ hashFiles('requirements*.txt') }}-v1
+          key: drakben-pip-${{ hashFiles('requirements*.txt') }}-v2
           restore-keys: drakben-pip-
 
-      - name: "Install Python dependencies"
+      - name: "Python dependencies"
         run: |
           python3 -m pip install -q --upgrade pip
-          python3 -m pip install -q -r requirements.txt 2>/dev/null | tail -3 || true
-          python3 -m pip install -q \
-            openai anthropic ollama chromadb \
-            playwright selenium \
-            PyGithub gitpython 2>/dev/null | tail -3 || true
+          python3 -m pip install -q -r requirements.txt 2>/dev/null | tail -2 || true
+          python3 -m pip install -q openai anthropic ollama chromadb playwright selenium PyGithub gitpython 2>/dev/null | tail -2 || true
           python3 -m playwright install chromium 2>/dev/null || true
 
-      - name: "Install Go tools and nuclei templates"
+      - name: "Go tools and nuclei templates"
         run: |
           export PATH=/root/go/bin:/usr/local/bin:$PATH
-          go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest 2>/dev/null || true
-          go install github.com/projectdiscovery/httpx/cmd/httpx@latest 2>/dev/null || true
-          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 2>/dev/null || true
-          go install github.com/projectdiscovery/katana/cmd/katana@latest 2>/dev/null || true
-          go install github.com/hahwul/dalfox/v2@latest 2>/dev/null || true
-          go install github.com/lc/gau/v2/cmd/gau@latest 2>/dev/null || true
-          go install github.com/tomnomnom/waybackurls@latest 2>/dev/null || true
+          for tool in "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest" "github.com/projectdiscovery/httpx/cmd/httpx@latest" "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest" "github.com/projectdiscovery/katana/cmd/katana@latest" "github.com/hahwul/dalfox/v2@latest" "github.com/lc/gau/v2/cmd/gau@latest" "github.com/tomnomnom/waybackurls@latest"; do
+            go install "$tool" 2>/dev/null || true
+          done
           nuclei -update-templates 2>/dev/null || true
 
       - name: "Build Rust syscall engine"
         run: |
           if [ -f modules/native/rust_syscalls/Cargo.toml ]; then
-            cd modules/native/rust_syscalls
-            cargo build --release 2>/dev/null && echo "Rust engine built" || echo "Rust skipped"
+            cd modules/native/rust_syscalls && cargo build --release 2>/dev/null && echo "Rust built" || echo "Rust skipped"
           fi
 
-      - name: "Restore Ollama model cache"
+      - name: "Restore Ollama cache"
         uses: actions/cache/restore@v4
         with:
           path: /root/.ollama/models
           key: nova-ollama-models-
           restore-keys: nova-ollama-models-
 
-      - name: "Start Ollama and verify model"
+      - name: "Start Ollama"
         run: |
           curl -fsSL https://ollama.ai/install.sh | sh 2>/dev/null
           nohup ollama serve > /tmp/ollama.log 2>&1 &
           sleep 10
-          for i in $(seq 1 20); do
-            curl -sf http://localhost:11434/api/tags > /dev/null 2>&1 && break
-            sleep 3
-          done
+          for i in $(seq 1 20); do curl -sf http://localhost:11434/api/tags > /dev/null 2>&1 && break; sleep 3; done
           if ! ollama list 2>/dev/null | grep -q "${LLM_MODEL%%:*}"; then
-            timeout 600 ollama pull "$LLM_MODEL" 2>/dev/null || \
-            timeout 300 ollama pull qwen3:1.7b 2>/dev/null || true
+            timeout 600 ollama pull "$LLM_MODEL" 2>/dev/null || timeout 300 ollama pull qwen3:1.7b 2>/dev/null || true
           fi
-          ollama list 2>/dev/null
 
-      - name: "Configure Drakben API env"
+      - name: "Configure Drakben"
         run: |
           mkdir -p config sessions logs
-          cat > config/api.env << APIENV
-          OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-          OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct:free
-          OPENAI_API_KEY=${OPENAI_API_KEY:-}
-          LOCAL_LLM_URL=http://localhost:11434
-          LOCAL_LLM_MODEL=${LLM_MODEL}
-          APIENV
+          echo "OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}" > config/api.env
+          echo "OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct:free" >> config/api.env
+          echo "OPENAI_API_KEY=${OPENAI_API_KEY:-}" >> config/api.env
+          echo "LOCAL_LLM_URL=http://localhost:11434" >> config/api.env
+          echo "LOCAL_LLM_MODEL=$LLM_MODEL" >> config/api.env
 
-      - name: "Phase 1 - Recon: Drakben ReconModule + CLI tools"
+      - name: "Phase 1 - Recon"
         run: |
           export PATH=/root/go/bin:/usr/local/bin:$PATH
           DOMAIN=$(echo "$TARGET" | sed -E 's|https?://([^/]+).*|\1|')
           WS="$WORKSPACE"
-          python3 << 'PY'
+          python3 -c "
           import sys,os,json; sys.path.insert(0,'.')
-          target=os.environ['TARGET']; ws=os.environ['WORKSPACE']
+          t=os.environ['TARGET']; ws=os.environ['WORKSPACE']
           try:
             from modules.recon import ReconModule
-            r=ReconModule(target).run()
-            print(f"  Drakben recon: {len(r.get('subdomains',[]))} subs, {len(r.get('endpoints',[]))} endpoints")
-            json.dump(r,open(f"{ws}/recon/recon_results.json",'w'),indent=2)
-          except Exception as e: print(f"  ReconModule: {e}")
-          PY
+            r=ReconModule(t).run(); print('  Drakben recon: subs='+str(len(r.get('subdomains',[]))),'eps='+str(len(r.get('endpoints',[]))))
+            json.dump(r,open(ws+'/recon/recon_results.json','w'),indent=2)
+          except Exception as e: print('  ReconModule:',e)
+          " 2>/dev/null || true
           subfinder -d "$DOMAIN" -silent 2>/dev/null | tee $WS/recon/subdomains.txt | wc -l | xargs echo "  subfinder:"
           cat $WS/recon/subdomains.txt 2>/dev/null | httpx -silent -status-code 2>/dev/null | tee $WS/recon/live.txt | wc -l | xargs echo "  live hosts:"
           katana -u "$TARGET" -silent -depth 3 2>/dev/null | tee $WS/recon/endpoints.txt | wc -l | xargs echo "  endpoints:"
-          gau "$DOMAIN" 2>/dev/null | sort -u | tee $WS/recon/gau.txt | wc -l | xargs echo "  gau URLs:"
+          gau "$DOMAIN" 2>/dev/null | sort -u | tee $WS/recon/gau.txt | wc -l | xargs echo "  gau:"
 
-      - name: "Phase 2 - Nuclei and Nikto scan"
+      - name: "Phase 2 - Nuclei and Nikto"
         run: |
           export PATH=/root/go/bin:/usr/local/bin:$PATH
           WS="$WORKSPACE"
-          python3 << 'PY'
+          python3 -c "
           import sys,os,json; sys.path.insert(0,'.')
-          target=os.environ['TARGET']; ws=os.environ['WORKSPACE']
+          t=os.environ['TARGET']; ws=os.environ['WORKSPACE']
           try:
             from modules.nuclei import NucleiModule
-            r=NucleiModule(target).run()
-            print(f"  Drakben Nuclei: {len(r.get('findings',[]))} findings")
-            json.dump(r,open(f"{ws}/reports/nuclei_drakben.json",'w'),indent=2)
-          except Exception as e: print(f"  NucleiModule: {e}")
-          PY
-          nuclei -u "$TARGET" -t exposures,vulnerabilities,misconfiguration,cves,technologies \
-            -severity critical,high,medium -silent -json 2>/dev/null \
-            | tee $WS/reports/nuclei_raw.json | wc -l | xargs echo "  raw nuclei:"
+            r=NucleiModule(t).run(); print('  Drakben nuclei: findings='+str(len(r.get('findings',[]))))
+            json.dump(r,open(ws+'/reports/nuclei_drakben.json','w'),indent=2)
+          except Exception as e: print('  NucleiModule:',e)
+          " 2>/dev/null || true
+          nuclei -u "$TARGET" -t exposures,vulnerabilities,misconfiguration,cves,technologies -severity critical,high,medium -silent -json 2>/dev/null | tee $WS/reports/nuclei_raw.json | wc -l | xargs echo "  raw nuclei:"
           nikto -h "$TARGET" -Format json -output $WS/reports/nikto.json 2>/dev/null || true
           wafw00f "$TARGET" 2>/dev/null | tee $WS/reports/waf.txt || true
-          sslscan "$TARGET" 2>/dev/null | grep -c "VULNERABLE\|INSECURE" | xargs echo "  ssl issues:" || true
+          sslscan "$TARGET" 2>/dev/null | grep -c "VULNERABLE\|INSECURE" | xargs echo "  ssl:" || true
 
-      - name: "Phase 3 - Exploit modules: injection, auth, file, headers"
+      - name: "Phase 3 - Exploit modules injection auth file headers"
         run: |
           export PATH=/root/go/bin:/usr/local/bin:$PATH
           WS="$WORKSPACE"
-          python3 << 'PY'
+          python3 -c "
           import sys,os,json,importlib; sys.path.insert(0,'.')
-          target=os.environ['TARGET']; ws=os.environ['WORKSPACE']; results={}
-          for mod,cls in [
-            ('modules.exploit.injection','InjectionModule'),
-            ('modules.exploit.auth_bypass','AuthBypassModule'),
-            ('modules.exploit.file_inclusion','FileInclusionModule'),
-            ('modules.exploit.header_security','HeaderSecurityModule'),
-          ]:
+          t=os.environ['TARGET']; ws=os.environ['WORKSPACE']; results={}
+          for mod,cls in [('modules.exploit.injection','InjectionModule'),('modules.exploit.auth_bypass','AuthBypassModule'),('modules.exploit.file_inclusion','FileInclusionModule'),('modules.exploit.header_security','HeaderSecurityModule')]:
             try:
-              m=importlib.import_module(mod); obj=getattr(m,cls)(target); r=obj.run()
-              results[cls]=len(r.get('findings',[])); print(f"  {cls}: {results[cls]} findings")
-            except Exception as e: print(f"  {cls}: {e}")
-          json.dump(results,open(f"{ws}/reports/phase3_exploits.json",'w'),indent=2)
-          PY
+              m=importlib.import_module(mod); r=getattr(getattr(m,cls)(t),'run')()
+              results[cls]=len(r.get('findings',[])); print(f'  {cls}: {results[cls]}')
+            except Exception as e: print(f'  {cls}:',e)
+          json.dump(results,open(ws+'/reports/phase3_exploits.json','w'),indent=2)
+          " 2>/dev/null || true
           cat $WORKSPACE/recon/endpoints.txt 2>/dev/null | head -200 | dalfox pipe --silence 2>/dev/null | tee $WORKSPACE/reports/dalfox.txt | wc -l | xargs echo "  dalfox XSS:" || true
 
-      - name: "Phase 4 - Hive Mind: multi-agent swarm"
+      - name: "Phase 4 - Hive Mind swarm"
         run: |
-          python3 << 'PY'
+          python3 -c "
           import sys,os,json; sys.path.insert(0,'.')
-          target=os.environ['TARGET']; ws=os.environ['WORKSPACE']
+          t=os.environ['TARGET']; ws=os.environ['WORKSPACE']
           try:
             from modules.hive_mind import HiveMind
-            r=HiveMind(target=target,max_agents=4).run()
-            print(f"  Hive Mind: {len(r.get('findings',[]))} findings | agents: {r.get('agents_used','?')}")
-            json.dump(r,open(f"{ws}/reports/hive_mind.json",'w'),indent=2)
-          except Exception as e: print(f"  HiveMind: {e}")
-          PY
+            r=HiveMind(target=t,max_agents=4).run()
+            print('  Hive Mind: findings='+str(len(r.get('findings',[]))),'agents='+str(r.get('agents_used','?')))
+            json.dump(r,open(ws+'/reports/hive_mind.json','w'),indent=2)
+          except Exception as e: print('  HiveMind:',e)
+          " 2>/dev/null || true
 
-      - name: "Phase 5 - CVE Database, CVSS, Cloud Scanner"
+      - name: "Phase 5 - CVE Database CVSS Cloud"
         run: |
-          python3 << 'PY'
-          import sys,os,json,importlib; sys.path.insert(0,'.')
-          target=os.environ['TARGET']; ws=os.environ['WORKSPACE']
-          domain=target.replace('https://','').replace('http://','').split('/')[0]
+          python3 -c "
+          import sys,os,json; sys.path.insert(0,'.')
+          t=os.environ['TARGET']; ws=os.environ['WORKSPACE']
+          domain=t.replace('https://','').replace('http://','').split('/')[0]
           try:
             from modules.cve_database import CVEDatabase
-            cves=CVEDatabase().search(domain)
-            print(f"  CVE matches: {len(cves)}")
-            json.dump({'cves':cves,'target':target},open(f"{ws}/reports/cve.json",'w'),indent=2)
-          except Exception as e: print(f"  CVEDatabase: {e}")
-          for mod,cls,meth in [
-            ('modules.cloud_scanner','CloudScanner','scan'),
-          ]:
-            try:
-              m=importlib.import_module(mod); r=getattr(getattr(m,cls)(target),meth)()
-              print(f"  {cls}: {r.get('status','done')}")
-            except Exception as e: print(f"  {cls}: {e}")
-          PY
+            cves=CVEDatabase().search(domain); print('  CVE matches:',len(cves))
+            json.dump({'cves':cves,'target':t},open(ws+'/reports/cve.json','w'),indent=2)
+          except Exception as e: print('  CVEDatabase:',e)
+          try:
+            from modules.cloud_scanner import CloudScanner
+            r=CloudScanner(t).scan(); print('  Cloud:',r.get('status','done'))
+          except Exception as e: print('  CloudScanner:',e)
+          " 2>/dev/null || true
 
-      - name: "Phase 6 - Singularity: polymorphic exploit synthesis + Ghost Protocol"
+      - name: "Phase 6 - Singularity Ghost Protocol"
         run: |
-          python3 << 'PY'
+          python3 -c "
           import sys,os,json; sys.path.insert(0,'.')
-          target=os.environ['TARGET']; ws=os.environ['WORKSPACE']
+          t=os.environ['TARGET']; ws=os.environ['WORKSPACE']
           try:
             from core.singularity.engine import SingularityEngine
-            r=SingularityEngine(target=target).run(dry_run=True)
-            print(f"  Singularity: {r.get('mutations',0)} mutations | {r.get('new_tools',0)} new tools")
-          except Exception as e: print(f"  Singularity: {e}")
+            r=SingularityEngine(target=t).run(dry_run=True)
+            print('  Singularity: mutations='+str(r.get('mutations',0)),'new_tools='+str(r.get('new_tools',0)))
+          except Exception as e: print('  Singularity:',e)
           try:
             from modules.research.exploit_crafter import ExploitCrafter
-            r=ExploitCrafter(target=target).craft()
-            print(f"  ExploitCrafter: {len(r.get('exploits',[]))} exploits")
-            json.dump(r,open(f"{ws}/exploits/crafted.json",'w'),indent=2)
-          except Exception as e: print(f"  ExploitCrafter: {e}")
+            r=ExploitCrafter(target=t).craft()
+            print('  ExploitCrafter: exploits='+str(len(r.get('exploits',[]))))
+            json.dump(r,open(ws+'/exploits/crafted.json','w'),indent=2)
+          except Exception as e: print('  ExploitCrafter:',e)
           try:
             from core.security.ghost_protocol import GhostProtocol
-            ev=GhostProtocol().generate_evasion_profile(target)
-            print(f"  Ghost Protocol: {ev.get('technique','active')}")
-          except Exception as e: print(f"  GhostProtocol: {e}")
-          PY
+            ev=GhostProtocol().generate_evasion_profile(t); print('  GhostProtocol:',ev.get('technique','active'))
+          except Exception as e: print('  GhostProtocol:',e)
+          " 2>/dev/null || true
 
-      - name: "Phase 7 - Post-exploit and AD attack chains"
+      - name: "Phase 7 - Post-exploit AD attacks"
         run: |
-          python3 << 'PY'
+          python3 -c "
           import sys,os; sys.path.insert(0,'.')
-          target=os.environ['TARGET']; ws=os.environ['WORKSPACE']
+          t=os.environ['TARGET']; ws=os.environ['WORKSPACE']
           try:
             from modules.post_exploit import PostExploitModule
-            r=PostExploitModule(target=target).run(dry_run=True)
-            print(f"  PostExploit chains: {len(r.get('chains',[]))}")
-          except Exception as e: print(f"  PostExploit: {e}")
+            r=PostExploitModule(target=t).run(dry_run=True); print('  PostExploit chains:',len(r.get('chains',[])))
+          except Exception as e: print('  PostExploit:',e)
           try:
             from modules.ad_attacks import ADAttackModule
-            r=ADAttackModule(target=target).enumerate()
-            print(f"  AD vectors: {len(r.get('vectors',[]))}")
-          except Exception as e: print(f"  ADAttacks: {e}")
-          PY
+            r=ADAttackModule(target=t).enumerate(); print('  AD vectors:',len(r.get('vectors',[])))
+          except Exception as e: print('  ADAttacks:',e)
+          " 2>/dev/null || true
 
       - name: "Phase 8 - Report generation"
         run: |
-          python3 << 'PY'
+          python3 -c "
           import sys,os,json,glob; sys.path.insert(0,'.')
-          target=os.environ['TARGET']; program=os.environ['PROGRAM']
+          t=os.environ['TARGET']; prog=os.environ['PROGRAM']
           ws=os.environ['WORKSPACE']; run_id=os.environ['GITHUB_RUN_ID']
           try:
             from modules.report_generator import ReportGenerator
-            path=ReportGenerator(target=target,program=program,workspace=ws).generate(format='markdown',run_id=run_id)
-            print(f"  Report: {path}")
+            path=ReportGenerator(target=t,program=prog,workspace=ws).generate(format='markdown',run_id=run_id)
+            print('  Report:',path)
           except Exception as e:
-            print(f"  ReportGenerator: {e}")
+            print('  ReportGenerator:',e)
             all_d={}
-            for f in glob.glob(f"{ws}/reports/*.json"):
+            for f in glob.glob(ws+'/reports/*.json'):
               try: all_d[os.path.basename(f)]=json.load(open(f))
               except: pass
             total=sum(len(d.get('findings',[])) for d in all_d.values() if isinstance(d,dict))
-            open(f"{ws}/reports/drakben_final_report.md",'w').write(
-              f"# Drakben Hunt Report\n\nTarget: {target}\nProgram: {program}\nRun: {run_id}\nFindings: {total}\n\n" +
-              '\n'.join(f"## {k}\n```json\n{json.dumps(v,indent=2)[:1500]}\n```" for k,v in all_d.items()))
-            print(f"  Fallback report: {total} findings")
-          PY
+            open(ws+'/reports/drakben_final_report.md','w').write('# Drakben Hunt Report\nTarget: '+t+'\nProgram: '+prog+'\nRun: '+run_id+'\nFindings: '+str(total))
+            print('  Fallback report:',total,'findings')
+          " 2>/dev/null || true
 
       - name: "Post GitHub Issue"
         if: always()
@@ -358,38 +315,17 @@ jobs:
           NUCLEI=$(wc -l < $WORKSPACE/reports/nuclei_raw.json 2>/dev/null || echo 0)
           SUBS=$(wc -l < $WORKSPACE/recon/live.txt 2>/dev/null || echo 0)
           URLS=$(wc -l < $WORKSPACE/recon/endpoints.txt 2>/dev/null || echo 0)
-          BODY="## Drakben Hunt Report - Nova Comparison Challenge
+          BODY="## Drakben Hunt Report - Nova Comparison\n\n**Date:** $DATE  **Target:** $TARGET  **Program:** $PROGRAM\n[View run]($RUN_URL)\n\n| Phase | Result |\n|-------|--------|\n| Recon | ${SUBS} hosts, ${URLS} endpoints |\n| Nuclei | ${NUCLEI} findings |\n| Hive Mind | Multi-agent complete |\n| Singularity | Polymorphic exploits |\n\n*Drakben - Autonomous Pentesting Agent*"
+          gh issue create --title "Drakben Hunt: $PROGRAM - $(date +%Y-%m-%d)" --body "$BODY" --label "drakben-hunt,$PROGRAM" 2>/dev/null || true
 
-**Date:** $DATE | **Target:** \`$TARGET\` | **Program:** \`$PROGRAM\`
-[View run]($RUN_URL)
-
-| Phase | Drakben Result |
-|-------|----------------|
-| Recon | ${SUBS} live hosts, ${URLS} endpoints |
-| Nuclei | ${NUCLEI} findings |
-| Hive Mind | Multi-agent hunt complete |
-| Singularity | Polymorphic exploits synthesized |
-| Post-Exploit | Attack chains analyzed |
-
-> Compare with Nova Total Dominance run on same target
-
-*Drakben - Autonomous Pentesting Agent*"
-          gh issue create --title "Drakben Hunt: $PROGRAM - $(date +%Y-%m-%d)" --body "$BODY" \
-            --label "drakben-hunt,bug-bounty,$PROGRAM" 2>/dev/null || true
-
-      - name: "Notify Telegram and Discord"
+      - name: "Notify"
         if: always()
         run: |
           RUN_URL="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          MSG="Drakben Hunt Complete%0ATarget: $TARGET%0AProgram: $PROGRAM%0ARun: $RUN_URL"
-          [ -n "$TELEGRAM_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ] && \
-            curl -s "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-              -d "chat_id=${TELEGRAM_CHAT_ID}" -d "text=${MSG}" 2>/dev/null || true
-          [ -n "$DISCORD_WEBHOOK_URL" ] && \
-            curl -s -X POST "$DISCORD_WEBHOOK_URL" -H "Content-Type: application/json" \
-              -d "{\"content\":\"Drakben Hunt Complete - $TARGET ($PROGRAM). Run: $RUN_URL\"}" 2>/dev/null || true
+          [ -n "$TELEGRAM_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ] && curl -s "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" -d "text=Drakben Hunt Complete%0ATarget: $TARGET%0ARun: $RUN_URL" 2>/dev/null || true
+          [ -n "$DISCORD_WEBHOOK_URL" ] && curl -s -X POST "$DISCORD_WEBHOOK_URL" -H "Content-Type: application/json" -d "{\"content\":\"Drakben Hunt Complete - $TARGET ($PROGRAM). Run: $RUN_URL\"}" 2>/dev/null || true
 
-      - name: "Upload reports and evidence"
+      - name: "Upload artifacts"
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -400,28 +336,26 @@ jobs:
             /root/drakben_workspace/recon/
           retention-days: 30
 
-      - name: "Write run summary"
+      - name: "Run summary"
         if: always()
         run: |
-          cat >> $GITHUB_STEP_SUMMARY << SUMMARY
-          ## Drakben Hunt - Run Summary
-
-          | | |
-          |---|---|
-          | **Target** | $TARGET |
-          | **Program** | $PROGRAM |
-          | **Model** | $LLM_MODEL |
-          | **Depth** | $SCAN_DEPTH |
-
-          ### Phases Executed
-          - Phase 1 - Recon (subfinder, httpx, katana, gau + Drakben ReconModule)
-          - Phase 2 - Nuclei + Nikto + WAF + SSL
-          - Phase 3 - Exploit modules (injection, auth bypass, file inclusion, headers)
-          - Phase 4 - Hive Mind (multi-agent swarm)
-          - Phase 5 - CVE Database + CVSS + Cloud Scanner
-          - Phase 6 - Singularity (polymorphic synthesis + Ghost Protocol)
-          - Phase 7 - Post-exploit + AD attack chains
-          - Phase 8 - Report generation
-
-          > Compare findings against Nova Total Dominance run on same target
-          SUMMARY
+          echo "## Drakben Hunt - Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Target** | $TARGET |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Program** | $PROGRAM |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Model** | $LLM_MODEL |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Depth** | $SCAN_DEPTH |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Phases Executed" >> $GITHUB_STEP_SUMMARY
+          echo "- Phase 1: Recon (subfinder, httpx, katana, gau + Drakben ReconModule)" >> $GITHUB_STEP_SUMMARY
+          echo "- Phase 2: Nuclei + Nikto + WAF + SSL" >> $GITHUB_STEP_SUMMARY
+          echo "- Phase 3: Exploit modules (injection, auth, file, headers)" >> $GITHUB_STEP_SUMMARY
+          echo "- Phase 4: Hive Mind (multi-agent swarm)" >> $GITHUB_STEP_SUMMARY
+          echo "- Phase 5: CVE Database + CVSS + Cloud Scanner" >> $GITHUB_STEP_SUMMARY
+          echo "- Phase 6: Singularity (polymorphic synthesis + Ghost Protocol)" >> $GITHUB_STEP_SUMMARY
+          echo "- Phase 7: Post-exploit + AD attack chains" >> $GITHUB_STEP_SUMMARY
+          echo "- Phase 8: Report generation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> Compare findings against Nova Total Dominance run on same target" >> $GITHUB_STEP_SUMMARY
