@@ -119,9 +119,9 @@ jobs:
 
       - name: "Python dependencies"
         run: |
-          python3 -m pip install -q --upgrade pip
-          python3 -m pip install -q -r requirements.txt 2>/dev/null | tail -2 || true
-          python3 -m pip install -q openai anthropic ollama chromadb playwright selenium PyGithub gitpython 2>/dev/null | tail -2 || true
+          python3 -m pip install -q --upgrade pip --break-system-packages
+          python3 -m pip install -q --break-system-packages -r requirements.txt 2>/dev/null | tail -2 || true
+          python3 -m pip install -q --break-system-packages openai anthropic ollama chromadb playwright selenium PyGithub gitpython 2>/dev/null | tail -2 || true
           python3 -m playwright install chromium 2>/dev/null || true
 
       - name: "Go tools and nuclei templates"
