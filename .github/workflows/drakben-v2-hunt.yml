@@ -56,11 +56,11 @@ jobs:
               7) TARGET="https://customers.gitlab.com"   ; PROGRAM="gitlab"    ; LABEL="GitLab Customers" ;;
             esac
           fi
-          if echo "$TARGET" | grep -qiE "localhost|127\."; then exit 1; fi
+          if echo "$TARGET" | grep -qiE "localhost|127\\."; then exit 1; fi
           echo "target=$TARGET"   >> $GITHUB_OUTPUT
           echo "program=$PROGRAM" >> $GITHUB_OUTPUT
           echo "label=$LABEL"     >> $GITHUB_OUTPUT
-          echo "Target: $TARGET  Program: $PROGRAM"
+          echo "Target: $TARGET | Program: $PROGRAM"
 
   drakben-hunt:
     name: "Drakben v2 - ${{ needs.select-target.outputs.label }}"
@@ -97,12 +97,19 @@ jobs:
       VENV:                /opt/drakben-venv
 
     steps:
-      - name: "Bootstrap"
+      - name: "Bootstrap Kali Arsenal"
         run: |
-          echo "Drakben v2 | Target=$TARGET | $(date -u)"
+          echo "Drakben v2 | $TARGET | $(date -u)"
           export DEBIAN_FRONTEND=noninteractive
           apt-get update -qq 2>/dev/null | tail -1
-          apt-get install -y -qq             python3 python3-pip python3-venv python3-full git curl wget jq bc             nmap masscan nikto gobuster sqlmap hydra wafw00f sslscan ffuf             subfinder httpx-toolkit nuclei dnsrecon whatweb             net-tools iputils-ping dnsutils whois netcat-openbsd             libssl-dev libffi-dev build-essential golang-go             rustc cargo chromium-driver             2>/dev/null | tail -2 || true
+          apt-get install -y -qq \
+            python3 python3-pip python3-venv python3-full git curl wget jq bc \
+            nmap masscan nikto gobuster sqlmap hydra wafw00f sslscan ffuf \
+            subfinder httpx-toolkit nuclei dnsrecon whatweb \
+            net-tools iputils-ping dnsutils whois netcat-openbsd \
+            libssl-dev libffi-dev build-essential golang-go rustc cargo \
+            chromium-driver \
+            2>/dev/null | tail -2 || true
           mkdir -p $WORKSPACE/{reports,exploits,chains,evidence,recon,sessions,weapons}
           mkdir -p /root/go/bin
           echo "/root/go/bin" >> $GITHUB_PATH
@@ -111,19 +118,29 @@ jobs:
       - name: "Checkout Drakben"
         uses: actions/checkout@v4
 
-      - name: "Create Python venv (solves Kali pip RECORD issue)"
+      - name: "Create Python venv (fixes Kali pip RECORD issue)"
         run: |
           python3 -m venv $VENV --system-site-packages
           $VENV/bin/pip install --quiet --upgrade pip setuptools wheel 2>/dev/null | tail -1 || true
           $VENV/bin/pip install --quiet -r requirements.txt 2>/dev/null | tail -2 || true
-          $VENV/bin/pip install --quiet             openai anthropic ollama chromadb             playwright selenium PyGithub gitpython             curl-cffi pydantic aiofiles             2>/dev/null | tail -2 || true
+          $VENV/bin/pip install --quiet \
+            openai anthropic chromadb playwright selenium \
+            PyGithub gitpython curl-cffi pydantic aiofiles \
+            2>/dev/null | tail -2 || true
           $VENV/bin/python -m playwright install chromium 2>/dev/null || true
           echo "Venv ready: $VENV"
 
-      - name: "Go tools and nuclei templates"
+      - name: "Go security tools"
         run: |
           export PATH=/root/go/bin:/usr/local/bin:$PATH
-          for tool in             "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"             "github.com/projectdiscovery/httpx/cmd/httpx@latest"             "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"             "github.com/projectdiscovery/katana/cmd/katana@latest"             "github.com/hahwul/dalfox/v2@latest"             "github.com/lc/gau/v2/cmd/gau@latest"             "github.com/tomnomnom/waybackurls@latest"; do
+          for tool in \
+            "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest" \
+            "github.com/projectdiscovery/httpx/cmd/httpx@latest" \
+            "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest" \
+            "github.com/projectdiscovery/katana/cmd/katana@latest" \
+            "github.com/hahwul/dalfox/v2@latest" \
+            "github.com/lc/gau/v2/cmd/gau@latest" \
+            "github.com/tomnomnom/waybackurls@latest"; do
             go install "$tool" 2>/dev/null || true
           done
           nuclei -update-templates 2>/dev/null || true
@@ -147,287 +164,337 @@ jobs:
             curl -sf http://localhost:11434/api/tags > /dev/null 2>&1 && break
             sleep 3
           done
-          if ! ollama list 2>/dev/null | grep -q "${LLM_MODEL%%:*}"; then
-            timeout 600 ollama pull "$LLM_MODEL" 2>/dev/null ||             timeout 300 ollama pull qwen3:1.7b 2>/dev/null || true
+          MODEL="$LLM_MODEL"
+          if ! ollama list 2>/dev/null | grep -q "${MODEL%%:*}"; then
+            timeout 600 ollama pull "$MODEL" 2>/dev/null || \
+            timeout 300 ollama pull qwen3:1.7b 2>/dev/null || true
           fi
           ollama list 2>/dev/null | head -3 || true
 
       - name: "Configure Drakben API"
         run: |
           mkdir -p config sessions logs
-          printf "OPENROUTER_API_KEY=%s\nOPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct:free\nOPENAI_API_KEY=%s\nLOCAL_LLM_URL=http://localhost:11434\nLOCAL_LLM_MODEL=%s\n"             "${OPENROUTER_API_KEY:-}" "${OPENAI_API_KEY:-}" "$LLM_MODEL" > config/api.env
+          printf "OPENROUTER_API_KEY=%s\nOPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct:free\nOPENAI_API_KEY=%s\nLOCAL_LLM_URL=http://localhost:11434\nLOCAL_LLM_MODEL=%s\n" \
+            "${OPENROUTER_API_KEY:-}" "${OPENAI_API_KEY:-}" "$LLM_MODEL" > config/api.env
 
-      - name: "Phase 1 - Recon (Drakben ReconModule + direct tools)"
+      - name: "Phase 1 - Recon (ReconModule + direct tools)"
         run: |
           export PATH=/root/go/bin:/usr/local/bin:$PATH
-          DOMAIN=$(echo "$TARGET" | sed -E "s|https?://([^/]+).*|\1|")
-          $VENV/bin/python -c "
-          import sys, os, json; sys.path.insert(0, '.')
-          t = os.environ['TARGET']; ws = os.environ['WORKSPACE']
+          DOMAIN=$(echo "$TARGET" | sed -E 's|https?://([^/]+).*|\1|')
+          $VENV/bin/python - << 'PYEOF'
+          import sys, os, json
+          sys.path.insert(0, '.')
+          t  = os.environ.get('TARGET', '')
+          ws = os.environ.get('WORKSPACE', '')
           try:
-            from modules.recon import ReconModule
-            r = ReconModule(t).run()
-            print('  ReconModule: subs=' + str(len(r.get('subdomains',[]))) + ' eps=' + str(len(r.get('endpoints',[]))))
-            json.dump(r, open(ws + '/recon/recon_results.json', 'w'), indent=2)
+              from modules.recon import ReconModule
+              r = ReconModule(t).run()
+              print('  ReconModule: subs=%d eps=%d' % (len(r.get('subdomains',[])), len(r.get('endpoints',[]))))
+              json.dump(r, open(ws + '/recon/recon_results.json', 'w'), indent=2)
           except Exception as e:
-            print('  ReconModule:', e)
-          " 2>/dev/null || true
+              print('  ReconModule:', e)
+          PYEOF
 
-          subfinder -d "$DOMAIN" -silent 2>/dev/null | tee $WORKSPACE/recon/subdomains.txt | wc -l | xargs echo "  subfinder:"
+          subfinder -d "$DOMAIN" -silent 2>/dev/null | tee $WORKSPACE/recon/subdomains.txt | wc -l | xargs echo "  subfinder subs:"
           cat $WORKSPACE/recon/subdomains.txt 2>/dev/null | httpx -silent -status-code 2>/dev/null | tee $WORKSPACE/recon/live.txt | wc -l | xargs echo "  live hosts:"
-          katana -u "$TARGET" -silent -depth 3 2>/dev/null | tee $WORKSPACE/recon/endpoints.txt | wc -l | xargs echo "  katana:"
-          gau "$DOMAIN" 2>/dev/null | sort -u | tee $WORKSPACE/recon/gau.txt | wc -l | xargs echo "  gau:"
-          waybackurls "$DOMAIN" 2>/dev/null | tee $WORKSPACE/recon/wayback.txt | wc -l | xargs echo "  wayback:"
+          katana -u "$TARGET" -silent -depth 3 2>/dev/null | tee $WORKSPACE/recon/endpoints.txt | wc -l | xargs echo "  katana endpoints:"
+          gau "$DOMAIN" 2>/dev/null | sort -u | tee $WORKSPACE/recon/gau.txt | wc -l | xargs echo "  gau URLs:"
+          waybackurls "$DOMAIN" 2>/dev/null | tee $WORKSPACE/recon/wayback.txt | wc -l | xargs echo "  wayback URLs:"
           cat $WORKSPACE/recon/endpoints.txt $WORKSPACE/recon/gau.txt $WORKSPACE/recon/wayback.txt 2>/dev/null | sort -u > $WORKSPACE/recon/all_urls.txt
-          wc -l $WORKSPACE/recon/all_urls.txt | xargs echo "  total URLs:"
+          wc -l $WORKSPACE/recon/all_urls.txt | xargs echo "  total unique URLs:"
 
-      - name: "Phase 2 - Nuclei, Nikto, WAF, SSL"
+      - name: "Phase 2 - Nuclei, Nikto, WAF, SSL, Dalfox"
         run: |
           export PATH=/root/go/bin:/usr/local/bin:$PATH
-          $VENV/bin/python -c "
-          import sys, os, json; sys.path.insert(0, '.')
-          t = os.environ['TARGET']; ws = os.environ['WORKSPACE']
+          $VENV/bin/python - << 'PYEOF'
+          import sys, os, json
+          sys.path.insert(0, '.')
+          t  = os.environ.get('TARGET', '')
+          ws = os.environ.get('WORKSPACE', '')
           try:
-            from modules.nuclei import NucleiModule
-            r = NucleiModule(t).run()
-            print('  NucleiModule: findings=' + str(len(r.get('findings',[]))))
-            json.dump(r, open(ws + '/reports/nuclei_drakben.json', 'w'), indent=2)
+              from modules.nuclei import NucleiModule
+              r = NucleiModule(t).run()
+              print('  NucleiModule: findings=%d' % len(r.get('findings',[])))
+              json.dump(r, open(ws + '/reports/nuclei_drakben.json', 'w'), indent=2)
           except Exception as e:
-            print('  NucleiModule:', e)
-          " 2>/dev/null || true
+              print('  NucleiModule:', e)
+          PYEOF
 
-          nuclei -u "$TARGET" -t exposures,vulnerabilities,misconfiguration,cves,technologies             -severity critical,high,medium -silent -json 2>/dev/null |             tee $WORKSPACE/reports/nuclei_raw.json | wc -l | xargs echo "  raw nuclei:"
-          nikto -h "$TARGET" -maxtime 180 -o $WORKSPACE/reports/nikto.txt 2>/dev/null || true
+          nuclei -u "$TARGET" -t exposures,vulnerabilities,misconfiguration,cves,technologies \
+            -severity critical,high,medium -silent -json 2>/dev/null | \
+            tee $WORKSPACE/reports/nuclei_raw.json | wc -l | xargs echo "  nuclei raw lines:"
+          nikto -h "$TARGET" -maxtime 150 -o $WORKSPACE/reports/nikto.txt 2>/dev/null || true
           wafw00f "$TARGET" 2>/dev/null | tee $WORKSPACE/reports/waf.txt || true
-          sslscan "$TARGET" 2>/dev/null | tee $WORKSPACE/reports/sslscan.txt | grep -c "VULNERABLE\|INSECURE" | xargs echo "  ssl issues:" || true
-          dalfox url "$TARGET" --silence 2>/dev/null | tee $WORKSPACE/reports/dalfox.txt | wc -l | xargs echo "  dalfox XSS:" || true
+          sslscan "$TARGET" 2>/dev/null | tee $WORKSPACE/reports/sslscan.txt | \
+            grep -c "VULNERABLE\|INSECURE" | xargs echo "  ssl issues:" || true
+          dalfox url "$TARGET" --silence 2>/dev/null | tee $WORKSPACE/reports/dalfox.txt | \
+            wc -l | xargs echo "  dalfox XSS:" || true
 
-      - name: "Phase 3 - Exploit modules (injection, auth, file, headers)"
+      - name: "Phase 3 - Exploit modules"
         run: |
           export PATH=/root/go/bin:/usr/local/bin:$PATH
-          $VENV/bin/python -c "
-          import sys, os, json, importlib; sys.path.insert(0, '.')
-          t = os.environ['TARGET']; ws = os.environ['WORKSPACE']
+          $VENV/bin/python - << 'PYEOF'
+          import sys, os, json, importlib
+          sys.path.insert(0, '.')
+          t  = os.environ.get('TARGET', '')
+          ws = os.environ.get('WORKSPACE', '')
           results = {}
-          for mod, cls in [
-            ('modules.exploit.injection',       'InjectionModule'),
-            ('modules.exploit.auth_bypass',     'AuthBypassModule'),
-            ('modules.exploit.file_inclusion',  'FileInclusionModule'),
-            ('modules.exploit.header_security', 'HeaderSecurityModule'),
-            ('modules.exploit.csrf',            'CSRFModule'),
-            ('modules.exploit.idor',            'IDORModule'),
+          for mod_path, cls_name in [
+              ('modules.exploit.injection',       'InjectionModule'),
+              ('modules.exploit.auth_bypass',     'AuthBypassModule'),
+              ('modules.exploit.file_inclusion',  'FileInclusionModule'),
+              ('modules.exploit.header_security', 'HeaderSecurityModule'),
+              ('modules.exploit.csrf',            'CSRFModule'),
+              ('modules.exploit.idor',            'IDORModule'),
           ]:
-            try:
-              m = importlib.import_module(mod)
-              r = getattr(getattr(m, cls)(t), 'run')()
-              results[cls] = len(r.get('findings', []))
-              print(f'  {cls}: {results[cls]} findings')
-            except Exception as e:
-              print(f'  {cls}:', e)
+              try:
+                  m   = importlib.import_module(mod_path)
+                  cls = getattr(m, cls_name)
+                  r   = cls(t).run()
+                  cnt = len(r.get('findings', []))
+                  results[cls_name] = cnt
+                  print('  %s: %d findings' % (cls_name, cnt))
+              except Exception as e:
+                  print('  %s: %s' % (cls_name, e))
           json.dump(results, open(ws + '/reports/phase3_exploits.json', 'w'), indent=2)
-          " 2>/dev/null || true
+          PYEOF
 
-          cat $WORKSPACE/recon/endpoints.txt 2>/dev/null | head -200 | dalfox pipe --silence 2>/dev/null |             tee -a $WORKSPACE/reports/dalfox.txt | wc -l | xargs echo "  dalfox pipe XSS:" || true
+          cat $WORKSPACE/recon/endpoints.txt 2>/dev/null | head -200 | \
+            dalfox pipe --silence 2>/dev/null | \
+            tee -a $WORKSPACE/reports/dalfox.txt | wc -l | xargs echo "  dalfox pipe XSS:" || true
 
       - name: "Phase 4 - Hive Mind (multi-agent cognitive swarm)"
         run: |
-          $VENV/bin/python -c "
-          import sys, os, json; sys.path.insert(0, '.')
-          t = os.environ['TARGET']; ws = os.environ['WORKSPACE']
-          try:
-            from modules.hive_mind import HiveMind
-            r = HiveMind(target=t, max_agents=4).run()
-            print('  HiveMind: findings=' + str(len(r.get('findings',[]))) + ' agents=' + str(r.get('agents_used','?')))
-            json.dump(r, open(ws + '/reports/hive_mind.json', 'w'), indent=2)
-          except Exception as e:
-            print('  HiveMind:', e)
+          $VENV/bin/python - << 'PYEOF'
+          import sys, os, json
+          sys.path.insert(0, '.')
+          t  = os.environ.get('TARGET', '')
+          ws = os.environ.get('WORKSPACE', '')
 
           try:
-            from core.agent.pentest_orchestrator import PentestOrchestrator
-            orch = PentestOrchestrator(target=t, max_rounds=3)
-            r = orch.run(dry_run=True)
-            print('  PentestOrchestrator: rounds=' + str(r.get('rounds', '?')))
-            json.dump(r, open(ws + '/reports/orchestrator.json', 'w'), indent=2)
+              from modules.hive_mind import HiveMind
+              r = HiveMind(target=t, max_agents=4).run()
+              cnt = len(r.get('findings', []))
+              print('  HiveMind: findings=%d agents=%s' % (cnt, r.get('agents_used','?')))
+              json.dump(r, open(ws + '/reports/hive_mind.json', 'w'), indent=2)
           except Exception as e:
-            print('  PentestOrchestrator:', e)
+              print('  HiveMind:', e)
 
           try:
-            from core.agent.multi_agent import MultiAgent
-            r = MultiAgent(target=t, agents=3).run()
-            print('  MultiAgent: done')
-            json.dump(r if isinstance(r, dict) else {}, open(ws + '/reports/multi_agent.json', 'w'), indent=2)
+              from core.agent.pentest_orchestrator import PentestOrchestrator
+              r = PentestOrchestrator(target=t, max_rounds=3).run(dry_run=True)
+              print('  PentestOrchestrator: rounds=%s' % r.get('rounds','?'))
+              json.dump(r, open(ws + '/reports/orchestrator.json', 'w'), indent=2)
           except Exception as e:
-            print('  MultiAgent:', e)
-          " 2>/dev/null || true
+              print('  PentestOrchestrator:', e)
 
-      - name: "Phase 5 - CVE Database, CVSS scoring, Cloud scanner"
+          try:
+              from core.agent.multi_agent import MultiAgent
+              r = MultiAgent(target=t, agents=3).run()
+              print('  MultiAgent: done')
+              json.dump(r if isinstance(r, dict) else {}, open(ws + '/reports/multi_agent.json', 'w'), indent=2)
+          except Exception as e:
+              print('  MultiAgent:', e)
+          PYEOF
+
+      - name: "Phase 5 - CVE Database, CVSS, Cloud Scanner"
         run: |
-          $VENV/bin/python -c "
-          import sys, os, json; sys.path.insert(0, '.')
-          t = os.environ['TARGET']; ws = os.environ['WORKSPACE']
+          $VENV/bin/python - << 'PYEOF'
+          import sys, os, json
+          sys.path.insert(0, '.')
+          t  = os.environ.get('TARGET', '')
+          ws = os.environ.get('WORKSPACE', '')
           domain = t.replace('https://','').replace('http://','').split('/')[0]
 
           try:
-            from modules.cve_database import CVEDatabase
-            cves = CVEDatabase().search(domain)
-            print('  CVE matches:', len(cves))
-            json.dump({'cves': cves, 'target': t}, open(ws + '/reports/cve.json', 'w'), indent=2)
+              from modules.cve_database import CVEDatabase
+              cves = CVEDatabase().search(domain)
+              print('  CVE matches:', len(cves))
+              json.dump({'cves': cves, 'target': t}, open(ws + '/reports/cve.json', 'w'), indent=2)
           except Exception as e:
-            print('  CVEDatabase:', e)
+              print('  CVEDatabase:', e)
 
           try:
-            from modules.cloud_scanner import CloudScanner
-            r = CloudScanner(t).scan()
-            print('  Cloud:', r.get('status','done'), r.get('findings','?'))
-            json.dump(r, open(ws + '/reports/cloud.json', 'w'), indent=2)
+              from modules.cloud_scanner import CloudScanner
+              r = CloudScanner(t).scan()
+              print('  Cloud: status=%s' % r.get('status','done'))
+              json.dump(r, open(ws + '/reports/cloud.json', 'w'), indent=2)
           except Exception as e:
-            print('  CloudScanner:', e)
+              print('  CloudScanner:', e)
 
           try:
-            from core.intelligence.exploit_predictor import ExploitPredictor
-            r = ExploitPredictor(target=t).predict()
-            print('  ExploitPredictor: predictions=' + str(len(r.get('predictions',[]))))
+              from core.intelligence.exploit_predictor import ExploitPredictor
+              r = ExploitPredictor(target=t).predict()
+              print('  ExploitPredictor: predictions=%d' % len(r.get('predictions',[])))
           except Exception as e:
-            print('  ExploitPredictor:', e)
-          " 2>/dev/null || true
+              print('  ExploitPredictor:', e)
+          PYEOF
 
       - name: "Phase 6 - Singularity self-evolution + Ghost Protocol evasion"
         run: |
-          $VENV/bin/python -c "
-          import sys, os, json; sys.path.insert(0, '.')
-          t = os.environ['TARGET']; ws = os.environ['WORKSPACE']
+          $VENV/bin/python - << 'PYEOF'
+          import sys, os, json
+          sys.path.insert(0, '.')
+          t  = os.environ.get('TARGET', '')
+          ws = os.environ.get('WORKSPACE', '')
 
           try:
-            from core.singularity.engine import SingularityEngine
-            r = SingularityEngine(target=t).run(dry_run=True)
-            print('  Singularity: mutations=' + str(r.get('mutations',0)) + ' new_tools=' + str(r.get('new_tools',0)))
-            json.dump(r, open(ws + '/reports/singularity.json', 'w'), indent=2)
+              from core.singularity.engine import SingularityEngine
+              r = SingularityEngine(target=t).run(dry_run=True)
+              print('  Singularity: mutations=%s new_tools=%s' % (r.get('mutations',0), r.get('new_tools',0)))
+              json.dump(r, open(ws + '/reports/singularity.json', 'w'), indent=2)
           except Exception as e:
-            print('  Singularity:', e)
+              print('  Singularity:', e)
 
           try:
-            from core.security.ghost_protocol import GhostProtocol
-            gp = GhostProtocol()
-            profile = gp.generate_evasion_profile(t) if hasattr(gp, 'generate_evasion_profile') else gp.run(t)
-            print('  GhostProtocol: technique=' + str(profile.get('technique','active')))
-            json.dump(profile, open(ws + '/reports/ghost_protocol.json', 'w'), indent=2)
+              from core.security.ghost_protocol import GhostProtocol
+              gp = GhostProtocol()
+              profile = gp.generate_evasion_profile(t) if hasattr(gp, 'generate_evasion_profile') else gp.run(t)
+              print('  GhostProtocol: technique=%s' % str(profile.get('technique','active')))
+              json.dump(profile, open(ws + '/reports/ghost_protocol.json', 'w'), indent=2)
           except Exception as e:
-            print('  GhostProtocol:', e)
+              print('  GhostProtocol:', e)
 
           try:
-            from core.intelligence.adversarial_adapter import AdversarialAdapter
-            r = AdversarialAdapter(target=t).adapt()
-            print('  AdversarialAdapter: strategies=' + str(len(r.get('strategies',[]))))
+              from core.intelligence.adversarial_adapter import AdversarialAdapter
+              r = AdversarialAdapter(target=t).adapt()
+              print('  AdversarialAdapter: strategies=%d' % len(r.get('strategies',[])))
           except Exception as e:
-            print('  AdversarialAdapter:', e)
+              print('  AdversarialAdapter:', e)
 
           try:
-            from core.intelligence.evolution_memory import EvolutionMemory
-            em = EvolutionMemory()
-            em.record(t, {'phase': 'singularity', 'run': os.environ.get('GITHUB_RUN_ID','')})
-            print('  EvolutionMemory: recorded')
+              from core.intelligence.evolution_memory import EvolutionMemory
+              em = EvolutionMemory()
+              em.record(t, {'phase': 'singularity', 'run': os.environ.get('GITHUB_RUN_ID','')})
+              print('  EvolutionMemory: recorded')
           except Exception as e:
-            print('  EvolutionMemory:', e)
-          " 2>/dev/null || true
+              print('  EvolutionMemory:', e)
+          PYEOF
 
-      - name: "Phase 7 - Post-exploit chains and AD attack vectors"
+      - name: "Phase 7 - Post-exploit chains and Brain Reasoning"
         run: |
-          $VENV/bin/python -c "
-          import sys, os, json; sys.path.insert(0, '.')
-          t = os.environ['TARGET']; ws = os.environ['WORKSPACE']
+          $VENV/bin/python - << 'PYEOF'
+          import sys, os, json
+          sys.path.insert(0, '.')
+          t  = os.environ.get('TARGET', '')
+          ws = os.environ.get('WORKSPACE', '')
 
           try:
-            from modules.post_exploit import PostExploitModule
-            r = PostExploitModule(target=t).run(dry_run=True)
-            print('  PostExploit: chains=' + str(len(r.get('chains',[]))))
-            json.dump(r, open(ws + '/reports/post_exploit.json', 'w'), indent=2)
+              from modules.post_exploit import PostExploitModule
+              r = PostExploitModule(target=t).run(dry_run=True)
+              print('  PostExploit: chains=%d' % len(r.get('chains',[])))
+              json.dump(r, open(ws + '/reports/post_exploit.json', 'w'), indent=2)
           except Exception as e:
-            print('  PostExploit:', e)
+              print('  PostExploit:', e)
 
           try:
-            from modules.ad_attacks import ADAttackModule
-            r = ADAttackModule(target=t).enumerate()
-            print('  AD vectors:', len(r.get('vectors',[])))
+              from modules.ad_attacks import ADAttackModule
+              r = ADAttackModule(target=t).enumerate()
+              print('  AD vectors:', len(r.get('vectors',[])))
           except Exception as e:
-            print('  ADAttacks:', e)
+              print('  ADAttacks:', e)
 
           try:
-            from core.agent.brain_reasoning import BrainReasoning
-            r = BrainReasoning(target=t).analyze_attack_paths()
-            print('  BrainReasoning: paths=' + str(len(r.get('paths',[]))))
+              from core.agent.brain_reasoning import BrainReasoning
+              r = BrainReasoning(target=t).analyze_attack_paths()
+              print('  BrainReasoning: paths=%d' % len(r.get('paths',[])))
           except Exception as e:
-            print('  BrainReasoning:', e)
-          " 2>/dev/null || true
+              print('  BrainReasoning:', e)
+          PYEOF
 
       - name: "Phase 8 - Report generation"
         run: |
-          $VENV/bin/python -c "
-          import sys, os, json, glob; sys.path.insert(0, '.')
-          t = os.environ['TARGET']; prog = os.environ['PROGRAM']
-          ws = os.environ['WORKSPACE']; run_id = os.environ['GITHUB_RUN_ID']
+          $VENV/bin/python - << 'PYEOF'
+          import sys, os, json, glob
+          sys.path.insert(0, '.')
+          t      = os.environ.get('TARGET', '')
+          prog   = os.environ.get('PROGRAM', '')
+          ws     = os.environ.get('WORKSPACE', '')
+          run_id = os.environ.get('GITHUB_RUN_ID', '')
 
           try:
-            from modules.report_generator import ReportGenerator
-            path = ReportGenerator(target=t, program=prog, workspace=ws).generate(format='markdown', run_id=run_id)
-            print('  Report:', path)
+              from modules.report_generator import ReportGenerator
+              path = ReportGenerator(target=t, program=prog, workspace=ws).generate(format='markdown', run_id=run_id)
+              print('  Report generated:', path)
           except Exception as e:
-            print('  ReportGenerator:', e)
-            all_d = {}
-            for f in glob.glob(ws + '/reports/*.json'):
-              try: all_d[os.path.basename(f)] = json.load(open(f))
-              except: pass
-            total = sum(len(d.get('findings',[])) for d in all_d.values() if isinstance(d, dict))
-            with open(ws + '/reports/drakben_v2_report.md', 'w') as rp:
-              rp.write('# Drakben v2 Hunt Report
-')
-              rp.write('Target: ' + t + '
-Program: ' + prog + '
-Run: ' + run_id + '
-Total Findings: ' + str(total) + '
-
-')
+              print('  ReportGenerator fallback:', e)
+              all_d = {}
+              for fp in glob.glob(ws + '/reports/*.json'):
+                  try:
+                      all_d[os.path.basename(fp)] = json.load(open(fp))
+                  except Exception:
+                      pass
+              total = sum(len(d.get('findings', [])) for d in all_d.values() if isinstance(d, dict))
+              lines_out = [
+                  '# Drakben v2 Hunt Report',
+                  'Target: ' + t,
+                  'Program: ' + prog,
+                  'Run: ' + run_id,
+                  'Total Findings: ' + str(total),
+                  '',
+              ]
               for name, data in all_d.items():
-                findings = data.get('findings', []) if isinstance(data, dict) else []
-                if findings:
-                  rp.write('## ' + name + ' (' + str(len(findings)) + ' findings)
-')
-                  for fi in findings[:5]:
-                    rp.write('- [' + str(fi.get('severity','?')).upper() + '] ' + str(fi.get('type', fi.get('name','?'))) + '
-')
-                  rp.write('
-')
-            print('  Fallback report: ' + str(total) + ' total findings')
-          " 2>/dev/null || true
+                  findings = data.get('findings', []) if isinstance(data, dict) else []
+                  if findings:
+                      lines_out.append('## ' + name + ' (' + str(len(findings)) + ' findings)')
+                      for fi in findings[:5]:
+                          sev = str(fi.get('severity', '?')).upper()
+                          typ = str(fi.get('type', fi.get('name', '?')))
+                          lines_out.append('- [' + sev + '] ' + typ)
+                      lines_out.append('')
+              open(ws + '/reports/drakben_v2_report.md', 'w').write('\n'.join(lines_out))
+              print('  Fallback report: %d total findings' % total)
+          PYEOF
 
       - name: "Post GitHub Issue"
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          DATE=$(date -u +"%Y-%m-%d")
           RUN_URL="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
           NUCLEI=$(wc -l < $WORKSPACE/reports/nuclei_raw.json 2>/dev/null || echo 0)
           SUBS=$(wc -l < $WORKSPACE/recon/live.txt 2>/dev/null || echo 0)
           URLS=$(wc -l < $WORKSPACE/recon/all_urls.txt 2>/dev/null || echo 0)
-
-          REPORT=""
+          BODY_FILE=$(mktemp /tmp/drak_body.XXXXXX)
           if [ -f "$WORKSPACE/reports/drakben_v2_report.md" ]; then
-            REPORT=$(head -c 60000 $WORKSPACE/reports/drakben_v2_report.md)
+            head -c 65000 "$WORKSPACE/reports/drakben_v2_report.md" > "$BODY_FILE"
           else
-            REPORT="## Drakben v2 Hunt\n\n**Target:** $TARGET  **Program:** $PROGRAM\n**Date:** $DATE\n[View run]($RUN_URL)\n\n| Phase | Result |\n|---|---|\n| Recon | ${SUBS} live hosts, ${URLS} URLs |\n| Nuclei | ${NUCLEI} findings |\n| Hive Mind | multi-agent complete |\n| Singularity | self-evolving modules |\n| Ghost Protocol | evasion active |"
+            {
+              echo "## Drakben v2 Hunt Results"
+              echo ""
+              echo "| Field | Value |"
+              echo "|---|---|"
+              echo "| **Target** | $TARGET |"
+              echo "| **Program** | $PROGRAM |"
+              echo "| **Date** | $DATE |"
+              echo "| **Phases** | Recon, Nuclei, Exploit, Hive Mind, CVE, Singularity, Ghost Protocol, Post-Exploit |"
+              echo "| **Live Hosts** | $SUBS |"
+              echo "| **URLs** | $URLS |"
+              echo "| **Nuclei** | $NUCLEI |"
+              echo "| **Run** | $RUN_URL |"
+            } > "$BODY_FILE"
           fi
-
-          gh issue create             --title "Drakben v2: $PROGRAM - $(date +%Y-%m-%d)"             --body "$REPORT"             --label "drakben-hunt,$PROGRAM" 2>/dev/null || true
+          gh issue create \
+            --title "Drakben v2: $PROGRAM - $DATE" \
+            --body-file "$BODY_FILE" \
+            --label "drakben-v2,$PROGRAM" 2>/dev/null || true
+          rm -f "$BODY_FILE"
 
       - name: "Notify"
         if: always()
         run: |
           RUN_URL="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           if [ -n "$TELEGRAM_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
-            curl -sf "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage"               -d "chat_id=${TELEGRAM_CHAT_ID}"               -d "text=Drakben v2 Hunt Complete%0ATarget: $TARGET%0ARun: $RUN_URL" > /dev/null 2>&1 || true
+            STATUS="${{ job.status }}"
+            curl -sf "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "text=Drakben v2 $STATUS - $TARGET ($PROGRAM). Run: $RUN_URL" > /dev/null 2>&1 || true
           fi
           if [ -n "$DISCORD_WEBHOOK_URL" ]; then
-            curl -sf -X POST "$DISCORD_WEBHOOK_URL"               -H "Content-Type: application/json"               -d "{\"content\":\"Drakben v2 Hunt Complete - $TARGET ($PROGRAM). Run: $RUN_URL\"}" > /dev/null 2>&1 || true
+            curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"content\":\"Drakben v2 ${{ job.status }} - $TARGET ($PROGRAM). Run: $RUN_URL\"}" > /dev/null 2>&1 || true
           fi
 
       - name: "Upload artifacts"
@@ -446,22 +513,31 @@ Total Findings: ' + str(total) + '
       - name: "Run summary"
         if: always()
         run: |
-          echo "## Drakben v2 - Run Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| | |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Target** | $TARGET |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Program** | $PROGRAM |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Model** | $LLM_MODEL |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Phases" >> $GITHUB_STEP_SUMMARY
-          echo "- Phase 1: Recon (ReconModule + subfinder, httpx, katana, gau)" >> $GITHUB_STEP_SUMMARY
-          echo "- Phase 2: Nuclei + Nikto + WAF + SSL + Dalfox XSS" >> $GITHUB_STEP_SUMMARY
-          echo "- Phase 3: Exploit modules (injection, auth bypass, file inclusion, IDOR, CSRF)" >> $GITHUB_STEP_SUMMARY
-          echo "- Phase 4: Hive Mind + PentestOrchestrator + MultiAgent cognitive swarm" >> $GITHUB_STEP_SUMMARY
-          echo "- Phase 5: CVE Database + CVSS + Cloud Scanner + ExploitPredictor" >> $GITHUB_STEP_SUMMARY
-          echo "- Phase 6: Singularity (self-evolution) + Ghost Protocol (WAF evasion)" >> $GITHUB_STEP_SUMMARY
-          echo "- Phase 7: Post-exploit chains + AD attack vectors + Brain Reasoning" >> $GITHUB_STEP_SUMMARY
-          echo "- Phase 8: Report generation" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> Compare results against Nova v6 run on same target for capability delta" >> $GITHUB_STEP_SUMMARY
+          WS=$WORKSPACE
+          NUCLEI=$(wc -l < $WS/reports/nuclei_raw.json 2>/dev/null || echo 0)
+          SUBS=$(wc -l < $WS/recon/live.txt 2>/dev/null || echo 0)
+          URLS=$(wc -l < $WS/recon/all_urls.txt 2>/dev/null || echo 0)
+          {
+            echo "## Drakben v2 - Run Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| **Target** | $TARGET |"
+            echo "| **Program** | $PROGRAM |"
+            echo "| **Model** | $LLM_MODEL |"
+            echo "| **Live Hosts** | $SUBS |"
+            echo "| **URLs** | $URLS |"
+            echo "| **Nuclei** | $NUCLEI |"
+            echo ""
+            echo "### Phases Executed"
+            echo "- Phase 1: Recon (ReconModule + subfinder, httpx, katana, gau)"
+            echo "- Phase 2: Nuclei + Nikto + WAF + SSL + Dalfox"
+            echo "- Phase 3: Exploit modules (injection, auth bypass, file inclusion, IDOR, CSRF)"
+            echo "- Phase 4: Hive Mind + PentestOrchestrator + MultiAgent cognitive swarm"
+            echo "- Phase 5: CVE Database + Cloud Scanner + ExploitPredictor"
+            echo "- Phase 6: Singularity (self-evolution) + Ghost Protocol (WAF evasion)"
+            echo "- Phase 7: Post-exploit chains + AD attack vectors + Brain Reasoning"
+            echo "- Phase 8: Report generation"
+            echo ""
+            echo "> Compare against Nova v6 run on same target for capability delta analysis"
+          } >> $GITHUB_STEP_SUMMARY
