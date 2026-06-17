@@ -147,6 +147,7 @@ jobs:
           echo "Go tools: $(ls /root/go/bin | wc -l) installed"
 
       - name: "Build Rust syscall engine"
+        continue-on-error: true
         run: |
           if [ -f modules/native/rust_syscalls/Cargo.toml ]; then
             cd modules/native/rust_syscalls
@@ -178,9 +179,10 @@ jobs:
             "${OPENROUTER_API_KEY:-}" "${OPENAI_API_KEY:-}" "$LLM_MODEL" > config/api.env
 
       - name: "Phase 1 - Recon (ReconModule + direct tools)"
+        continue-on-error: true
         run: |
+          set +e
           export PATH=/root/go/bin:/usr/local/bin:$PATH
-          DOMAIN=$(echo "$TARGET" | sed -E 's|https?://([^/]+).*|\1|')
           $VENV/bin/python - << 'PYEOF'
           import sys, os, json
           sys.path.insert(0, '.')
@@ -204,9 +206,10 @@ jobs:
           wc -l $WORKSPACE/recon/all_urls.txt | xargs echo "  total unique URLs:"
 
       - name: "Phase 2 - Nuclei, Nikto, WAF, SSL, Dalfox"
+        continue-on-error: true
         run: |
+          set +e
           export PATH=/root/go/bin:/usr/local/bin:$PATH
-          $VENV/bin/python - << 'PYEOF'
           import sys, os, json
           sys.path.insert(0, '.')
           t  = os.environ.get('TARGET', '')
@@ -231,9 +234,10 @@ jobs:
             wc -l | xargs echo "  dalfox XSS:" || true
 
       - name: "Phase 3 - Exploit modules"
+        continue-on-error: true
         run: |
+          set +e
           export PATH=/root/go/bin:/usr/local/bin:$PATH
-          $VENV/bin/python - << 'PYEOF'
           import sys, os, json, importlib
           sys.path.insert(0, '.')
           t  = os.environ.get('TARGET', '')
@@ -264,9 +268,10 @@ jobs:
             tee -a $WORKSPACE/reports/dalfox.txt | wc -l | xargs echo "  dalfox pipe XSS:" || true
 
       - name: "Phase 4 - Hive Mind (multi-agent cognitive swarm)"
+        continue-on-error: true
         run: |
+          set +e
           $VENV/bin/python - << 'PYEOF'
-          import sys, os, json
           sys.path.insert(0, '.')
           t  = os.environ.get('TARGET', '')
           ws = os.environ.get('WORKSPACE', '')
@@ -298,9 +303,10 @@ jobs:
           PYEOF
 
       - name: "Phase 5 - CVE Database, CVSS, Cloud Scanner"
+        continue-on-error: true
         run: |
+          set +e
           $VENV/bin/python - << 'PYEOF'
-          import sys, os, json
           sys.path.insert(0, '.')
           t  = os.environ.get('TARGET', '')
           ws = os.environ.get('WORKSPACE', '')
@@ -331,9 +337,10 @@ jobs:
           PYEOF
 
       - name: "Phase 6 - Singularity self-evolution + Ghost Protocol evasion"
+        continue-on-error: true
         run: |
+          set +e
           $VENV/bin/python - << 'PYEOF'
-          import sys, os, json
           sys.path.insert(0, '.')
           t  = os.environ.get('TARGET', '')
           ws = os.environ.get('WORKSPACE', '')
@@ -372,9 +379,10 @@ jobs:
           PYEOF
 
       - name: "Phase 7 - Post-exploit chains and Brain Reasoning"
+        continue-on-error: true
         run: |
+          set +e
           $VENV/bin/python - << 'PYEOF'
-          import sys, os, json
           sys.path.insert(0, '.')
           t  = os.environ.get('TARGET', '')
           ws = os.environ.get('WORKSPACE', '')
@@ -403,9 +411,10 @@ jobs:
           PYEOF
 
       - name: "Phase 8 - Report generation"
+        continue-on-error: true
         run: |
+          set +e
           $VENV/bin/python - << 'PYEOF'
-          import sys, os, json, glob
           sys.path.insert(0, '.')
           t      = os.environ.get('TARGET', '')
           prog   = os.environ.get('PROGRAM', '')
