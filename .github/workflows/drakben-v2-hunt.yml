@@ -82,8 +82,8 @@ jobs:
       PROGRAM:             ${{ needs.select-target.outputs.program }}
       LABEL:               ${{ needs.select-target.outputs.label }}
       WORKSPACE:           /root/drakben_workspace
-      LLM_MODEL:           ${{ inputs.model || 'qwen3:8b' }}
-      SCAN_DEPTH:          ${{ inputs.mode || 'normal' }}
+      LLM_MODEL:           "${{ inputs.model || 'qwen3:8b' }}"
+      SCAN_DEPTH:          "${{ inputs.mode || 'normal' }}"
       OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
       OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
       TELEGRAM_TOKEN:      ${{ secrets.NOVA_TELEGRAM_TOKEN }}
